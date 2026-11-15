@@ -1,0 +1,752 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>校园教务智能规划RAG系统</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- 图标：优先用本地 vendor（cdn.jsdelivr.net 在国内经常连不上），本地缺失再走 CDN -->
+    <link href="vendor/font-awesome/css/font-awesome.min.css" rel="stylesheet">
+    <link href="https://cdn.staticfile.org/font-awesome/4.7.0/css/font-awesome.min.css" rel="stylesheet">
+    <!-- Markdown渲染：本地 vendor 优先，保证断网也能正常渲染 -->
+    <script src="vendor/marked.min.js"></script>
+    <script>
+        if (!window.marked) {
+            document.write('<script src="https://cdn.staticfile.org/marked/12.0.2/marked.min.js"><\/script>');
+        }
+    </script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        primary: '#1677ff',
+                        light: '#e8f3ff'
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        .scrollbar-thin::-webkit-scrollbar {
+            width:4px;
+        }
+        .scrollbar-thin::-webkit-scrollbar-thumb {
+            background:#bfdbfe;
+            border-radius:4px;
+        }
+        .msg-bot {
+            background:#ffffff;
+        }
+        .msg-user {
+            background:#bae0ff;
+        }
+        pre {
+            background:#f3f4f6;
+            padding:8px;
+            border-radius:6px;
+            overflow-x:auto;
+        }
+        table{border-collapse:collapse;width:100%;}
+        td,th{border:1px solid #ddd;padding:6px;}
+        /* marked 加载失败时的纯文本兜底样式 */
+        .plain-md{white-space:pre-wrap;word-break:break-word;line-height:1.7;}
+        .plain-md a{color:#1677ff;text-decoration:underline;}
+    </style>
+</head>
+<body class="bg-[#e8f3ff] h-screen flex overflow-hidden font-sans">
+    <!-- 左侧边栏 -->
+    <div class="w-64 bg-white shadow-md flex flex-col">
+        <div class="p-4 border-b">
+            <h3 class="font-bold text-gray-700 mb-2">会话管理</h3>
+            <button id="newChatBtn" class="w-full bg-primary text-white py-2 rounded-lg flex items-center justify-center gap-2">
+                <i class="fa fa-plus"></i>新建对话
+            </button>
+            <div id="sessionList" class="mt-2 space-y-1 max-h-36 overflow-y-auto scrollbar-thin">
+            </div>
+            <button id="clearKbBtn" class="w-full mt-2 text-xs border py-1 rounded text-gray-600">清空个人知识库</button>
+            <div id="kbStatus" class="mt-2 text-xs text-gray-500 leading-5">知识库状态加载中……</div>
+            <button id="kbManageBtn" class="w-full mt-1 text-xs text-primary">查看已入库文档</button>
+        </div>
+        <div class="p-4 border-b">
+            <div class="flex justify-between items-center mb-2">
+                <h3 class="font-bold text-gray-700"><i class="fa fa-bell text-primary mr-1"></i>教务备忘录</h3>
+                <button id="addMemoBtn" class="text-primary text-lg"><i class="fa fa-plus-square"></i></button>
+            </div>
+            <div id="memoList" class="text-sm text-gray-500"></div>
+        </div>
+        <div class="p-4 mt-auto">
+            <h3 class="font-bold text-gray-700 mb-2 text-sm">学分概览</h3>
+            <div class="grid grid-cols-3 gap-1 text-center">
+                <div class="bg-light p-2 rounded">
+                    <div class="text-xl font-bold text-primary" id="creditTotal">23</div>
+                    <div class="text-xs text-gray-500">总学分</div>
+                </div>
+                <div class="bg-light p-2 rounded">
+                    <div class="text-xl font-bold text-primary" id="creditRequired">23</div>
+                    <div class="text-xs text-gray-500">必修</div>
+                </div>
+                <div class="bg-light p-2 rounded">
+                    <div class="text-xl font-bold text-primary" id="creditElective">0</div>
+                    <div class="text-xs text-gray-500">选修</div>
+                </div>
+            </div>
+            <button id="authBtn" class="w-full mt-2 text-primary text-sm">授权同步（录入已修课程）</button>
+        </div>
+    </div>
+    <!-- 主聊天区域 -->
+    <div class="flex-1 flex flex-col">
+        <div class="p-4 border-b bg-white">
+            <!-- 第一行：标题、学籍信息、修改学籍 -->
+            <div class="flex items-center gap-2 flex-wrap mb-3">
+                <h2 class="text-lg font-bold text-gray-700 mr-4">校园教务智能规划RAG系统 <span class="text-xs text-gray-400">学分自查 | 选课规划 | 教务通知 | 备忘录提醒</span></h2>
+                <span id="userInfoShow" class="text-sm text-sky-700"></span>
+                <button onclick="localStorage.removeItem('rag_user_info');localStorage.removeItem('stu_course_data');location.href='login.html'" class="text-sm text-sky-500 underline">修改学籍</button>
+            </div>
+            <!-- 第二行：全部功能按钮 -->
+            <div class="flex items-center gap-2 flex-wrap">
+               <button onclick="sendQuick('帮我生成毕业学分统计、学分达标情况、毕业要求检查')" class="px-3 py-1 rounded-lg bg-primary text-white mx-1 cursor-pointer">毕业学分</button>
+<button onclick="sendQuick('结合我的专业、已修课程，帮我做下学期选课规划，推荐课程、避坑建议')" class="px-3 py-1 rounded-lg bg-primary text-white mx-1 cursor-pointer">下学期选课规划</button>
+                <button id="uploadDocBtn" class="px-3 py-1 rounded-full bg-light text-primary text-sm"><i class="fa fa-upload mr-1"></i>多源入库</button>
+                <button id="urlBtn" class="px-3 py-1 rounded-full bg-light text-primary text-sm"><i class="fa fa-link mr-1"></i>链接入库</button>
+                <button id="kbBtn" class="px-3 py-1 rounded-full bg-light text-primary text-sm"><i class="fa fa-database mr-1"></i>我的知识库</button>
+            </div>
+        </div>
+        <div id="chatBox" class="flex-1 overflow-y-auto scrollbar-thin p-4 space-y-4">
+        </div>
+        <div class="p-4 bg-white border-t">
+            <div class="flex gap-2 max-w-4xl mx-auto">
+                <textarea id="userInput" rows="1" placeholder="输入你的问题，例如：查询本专业毕业学分..." class="flex-1 border rounded-lg px-4 py-2 resize-none focus:outline-primary"></textarea>
+                <button id="sendBtn" class="bg-primary text-white px-5 py-2 rounded-lg"><i class="fa fa-paper-plane"></i>发送</button>
+            </div>
+            <div class="text-xs text-gray-400 text-center mt-1">Enter发送，Shift+Enter换行</div>
+        </div>
+    </div>
+    <!-- 弹窗容器 -->
+    <div id="modalWrap" class="fixed inset-0 bg-black/40 hidden items-center justify-center z-50">
+        <div class="bg-white rounded-lg w-[480px] p-5 max-h-[85vh] overflow-y-auto">
+            <h3 id="modalTitle" class="font-bold text-lg mb-3"></h3>
+            <div id="modalBody"></div>
+            <div class="flex justify-end gap-2 mt-4">
+                <button id="modalCancel" class="px-4 py-1 border rounded">取消</button>
+                <button id="modalOk" class="px-4 py-1 bg-primary text-white rounded">确定</button>
+            </div>
+        </div>
+    </div>
+    <!-- 上传/链接后的自动摘要弹窗 -->
+    <div id="summaryModal" class="fixed inset-0 bg-black/40 hidden items-center justify-center z-50">
+        <div class="bg-white rounded-lg w-[600px] p-5 max-h-[82vh] overflow-y-auto scrollbar-thin">
+            <h3 class="font-bold text-lg mb-1 text-primary"><i class="fa fa-file-text-o mr-1"></i><span id="summaryTitle">内容要点提取</span></h3>
+            <div id="summaryMeta" class="text-xs text-gray-400 mb-3"></div>
+            <div id="summaryContent" class="text-sm text-gray-700 leading-relaxed"></div>
+            <div class="mt-4 flex justify-end gap-2">
+                <button id="copySummaryBtn" class="px-4 py-1 border rounded">复制要点</button>
+                <button id="closeSummaryBtn" class="px-4 py-1 bg-primary text-white rounded">关闭</button>
+            </div>
+        </div>
+    </div>
+   <script>
+/* ---------- Markdown 渲染（带降级，绝不因为 CDN 挂了就整条消息发不出去） ---------- */
+function escapeHtml(s){
+    return String(s == null ? "" : s)
+        .replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")
+        .replace(/"/g,"&quot;").replace(/'/g,"&#39;");
+}
+function renderMd(text){
+    const t = String(text == null ? "" : text);
+    try{
+        if(window.marked && typeof marked.parse === "function"){
+            return marked.parse(t);
+        }
+    }catch(e){
+        console.warn("markdown 渲染失败，已降级为纯文本：", e);
+    }
+    // marked 未加载（CDN 被墙/断网）时的兜底：保留换行，内容照常可读
+    return `<div class="plain-md">${escapeHtml(t)}</div>`;
+}
+function sendQuick(promptText) {
+    document.getElementById("userInput").value = promptText;
+    sendMsg(promptText, true);
+}
+const API_URL = "http://127.0.0.1:8000"
+/* 本地存储统一安全读取：即使某条数据被写坏，也不能让整个页面脚本挂掉 */
+function loadLS(key, fallback){
+    try{
+        const raw = localStorage.getItem(key);
+        if(raw === null || raw === "") return fallback;
+        const v = JSON.parse(raw);
+        return v === null || v === undefined ? fallback : v;
+    }catch(e){
+        console.warn(`本地数据 ${key} 解析失败，已重置：`, e);
+        return fallback;
+    }
+}
+let memoList = loadLS("memoList", [])
+if(!Array.isArray(memoList)) memoList = []
+let stuCourseData = loadLS("stu_course_data", null)
+let userId = localStorage.getItem("rag_user_id");
+if(!userId){
+    userId = "u_"+Date.now().toString(36)+Math.random().toString(36).slice(2);
+    localStorage.setItem("rag_user_id",userId);
+}
+const STORAGE_SESSIONS = "rag_sessions";
+const STORAGE_CURRENT = "rag_current_sid";
+let sessions = loadLS(STORAGE_SESSIONS, []);
+if(!Array.isArray(sessions)) sessions = [];
+let currentSessionId = localStorage.getItem(STORAGE_CURRENT) || null;
+function saveSessionStorage(){
+    localStorage.setItem(STORAGE_SESSIONS, JSON.stringify(sessions));
+    localStorage.setItem(STORAGE_CURRENT, currentSessionId||"");
+}
+function createNewSession(){
+    const sid = Date.now().toString();
+    sessions.push({id:sid, title:`对话${sessions.length+1}`, messages:[]});
+    switchSession(sid);
+    renderSessionList();
+    saveSessionStorage();
+}
+function switchSession(sid){
+    currentSessionId = sid;
+    const s = sessions.find(x=>x.id===sid);
+    // 清掉历史里空白的机器人消息（旧版本 422 时留下的“有问无答”气泡）
+    s.messages = (s.messages||[]).filter(m=>m && m.content && String(m.content).trim());
+    document.getElementById("chatBox").innerHTML = "";
+    s.messages.forEach(m=>appendMsg(m.role,m.content,false,m.sources));
+    renderSessionList();
+    saveSessionStorage();
+}
+function renderSessionList(){
+    const wrap = document.getElementById("sessionList");
+    wrap.innerHTML = sessions.map(s=>`
+        <div class="p-2 rounded cursor-pointer text-sm ${s.id===currentSessionId?'bg-primary/15 text-primary':'bg-light hover:bg-sky-100'}" data-sid="${s.id}">
+            ${s.title}
+        </div>`).join("");
+    wrap.querySelectorAll("div").forEach(el=>{
+        el.onclick = ()=>switchSession(el.dataset.sid);
+    })
+}
+function pushMessageToSession(role,content,sources){
+    if(!content || !String(content).trim()) return; // 不再把空回答写进会话
+    const s = sessions.find(x=>x.id===currentSessionId);
+    if(!s) return;
+    const msg = {role,content};
+    if(role==="bot" && sources && sources.length) msg.sources = sources;
+    s.messages.push(msg);
+    if(s.messages.length===1){
+        s.title = content.slice(0,16);
+        renderSessionList();
+    }
+    saveSessionStorage();
+}
+window.onload = ()=>{
+    const info = loadLS('rag_user_info', {});
+    if(!info.major){
+        location.href = 'login.html';
+        return;
+    }
+    document.getElementById('userInfoShow').innerText = `${info.school} | ${info.college} | ${info.major} | ${info.grade}`
+    if(sessions.length===0 || !currentSessionId){
+        createNewSession();
+    }else{
+        switchSession(currentSessionId);
+    }
+    renderMemo()
+    refreshCreditPanel()
+    refreshKbStatus()
+    document.getElementById("newChatBtn").onclick = createNewSession;
+    document.getElementById("closeSummaryBtn").onclick = closeSummary
+    document.getElementById("copySummaryBtn").onclick = copySummary
+    document.getElementById("kbManageBtn").onclick = ()=>{
+        modalOpen("我的知识库",`
+            <div id="kbStats" class="text-xs text-gray-500 mb-2"></div>
+            <div id="kbList" class="text-sm max-h-[50vh] overflow-y-auto"></div>
+        `,()=>{})
+        loadKb();
+    }
+    document.getElementById("clearKbBtn").onclick = async ()=>{
+        if(!confirm("确定清空你的全部上传知识库？不可恢复")) return;
+        const btn = document.getElementById("clearKbBtn");
+        const oldText = btn.innerText;
+        btn.disabled = true;
+        btn.innerText = "正在清空……";
+        try{
+            const r = await fetch(`${API_URL}/clear_user_collection?user_id=${encodeURIComponent(userId)}`,{method:"POST"});
+            const ret = await r.json().catch(()=>({msg:`后端返回 HTTP ${r.status}`}));
+            if(!r.ok) throw new Error(ret.msg || `HTTP ${r.status}`);
+            alert(ret.msg || "个人知识库已清空");
+            await refreshKbStatus(true);
+        }catch(e){
+            alert("清空失败：" + e.message + "\n\n请确认后端已在运行（backend 目录执行 python main.py），再打开 http://127.0.0.1:8000/health 自检。");
+        }finally{
+            btn.disabled = false;
+            btn.innerText = oldText;
+        }
+    }
+}
+/* 侧边栏知识库状态：以前写死在“加载中……”，现在真正去查 /kb/stats */
+async function refreshKbStatus(silent=false){
+    const dom = document.getElementById("kbStatus");
+    if(!dom) return;
+    if(!silent) dom.innerText = "知识库状态加载中……";
+    try{
+        const r = await fetch(`${API_URL}/kb/stats?user_id=${encodeURIComponent(userId)}`,{signal: AbortSignal.timeout ? AbortSignal.timeout(8000) : undefined});
+        if(!r.ok){
+            const ret = await r.json().catch(()=>({}));
+            throw new Error(ret.msg || `HTTP ${r.status}`);
+        }
+        const s = await r.json();
+        const backendName = s.backend === "qdrant" ? "Qdrant" : "本地索引";
+        dom.innerText = `知识库已就绪（${backendName}）· 文档 ${s.documents || 0} 个 · 片段 ${s.user_chunks || s.points || 0} 个`;
+    }catch(e){
+        dom.innerHTML = `<span class="text-red-400">后端未连接：${escapeHtml(e.message)}</span><br><span class="text-gray-400">请在 backend 目录启动 python main.py</span>`;
+    }
+}
+function refreshCreditPanel(){
+    if(!stuCourseData) return
+    document.getElementById("creditTotal").innerText = stuCourseData.totalCredit
+    document.getElementById("creditRequired").innerText = stuCourseData.requiredCredit
+    document.getElementById("creditElective").innerText = stuCourseData.electiveCredit
+}
+function saveMemos(){
+    try{ localStorage.setItem("memoList", JSON.stringify(memoList)); }
+    catch(e){ console.warn("备忘录保存失败：", e); }
+}
+function renderMemo(){
+    const wrap = document.getElementById("memoList")
+    if(!wrap) return
+    // ✅ 关键修复：以前删掉最后一条时直接 return，没写回 localStorage，刷新后“测试”又回来了
+    saveMemos()
+    if(memoList.length===0){
+        wrap.innerHTML = `<div class="text-xs text-gray-400">暂无备忘录，点右上角 + 添加</div>`
+        return
+    }
+    wrap.innerHTML = memoList.map((item,idx)=>{
+        const t = escapeHtml((item&&item.title)||"未命名提醒")
+        const time = item&&item.time ? `<span class="text-[10px] text-gray-400 ml-1">${escapeHtml(item.time.replace("T"," "))}</span>` : ""
+        return `<div class="p-2 rounded bg-light my-1 flex justify-between items-center gap-2">
+            <div class="text-xs break-all">${t}${time}</div>
+            <button type="button" onclick="delMemo(${idx})" title="删除" class="text-red-400 text-sm px-1 flex-shrink-0">×</button>
+        </div>`
+    }).join("")
+}
+function delMemo(i){
+    if(i<0 || i>=memoList.length) return
+    memoList.splice(i,1)
+    saveMemos()          // 先落盘，再重绘
+    renderMemo()
+}
+function exportMarkdown(text){
+    const blob = new Blob([text],{type:"text/markdown;charset=utf-8"});
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `教务报告_${new Date().toLocaleString('zh-CN').replace(/[\/:\s]/g,'-')}.md`;
+    a.click();
+    setTimeout(()=>URL.revokeObjectURL(a.href), 2000);
+}
+async function sendMsg(q, useRag=true){
+    q = (q||"").trim();
+    if(!q) return;
+    appendMsg("user",q,true);
+    document.getElementById("userInput").value=""
+    const userInfo = loadLS('rag_user_info', {});
+    if(stuCourseData){
+        userInfo['course_info'] = stuCourseData
+    }
+    const box = document.getElementById("chatBox");
+    const thinkingDiv = document.createElement("div");
+    thinkingDiv.className = "msg-bot p-3 rounded-lg max-w-[85%] shadow-sm";
+    thinkingDiv.innerHTML = `<div class="text-sm text-gray-400"><i class="fa fa-spinner fa-spin"></i> AI正在思考……</div>`;
+    box.appendChild(thinkingDiv);
+    box.scrollTop = box.scrollHeight;
+    let fullText = "";
+    let botDiv = null;
+    let streamDom = null;
+    let sources = [];
+    function renderSources(){
+        if(!botDiv) return;
+        const wrap = botDiv.querySelector(".sourceList");
+        if(!wrap) return;
+        if(!sources.length){ wrap.innerHTML = ""; return; }
+        wrap.innerHTML = `<div class="text-xs text-gray-400 mb-1"><i class="fa fa-book mr-1"></i>本次引用（点击查看片段）</div>` +
+            sources.map(s=>`<details class="mb-1 text-xs bg-light rounded px-2 py-1">
+                <summary class="cursor-pointer text-sky-700">[${s.index}] ${s.title}${s.page?` · 第${s.page}页`:""}${s.section?` · ${s.section}`:""}</summary>
+                <div class="text-gray-600 mt-1 leading-5">${(s.snippet||"").replace(/</g,"&lt;")}</div>
+            </details>`).join("");
+    }
+    function ensureBot(){
+        if(botDiv) return;
+        if(thinkingDiv.parentNode) thinkingDiv.remove();
+        botDiv = document.createElement("div");
+        botDiv.className = "msg-bot p-3 pb-9 rounded-lg max-w-[85%] shadow-sm relative";
+        botDiv.innerHTML = `<div class="streamText text-sm"></div>
+        <div class="sourceList mt-2"></div>
+        <button class="exportBtn absolute bottom-2 right-2 text-xs text-primary hidden">导出报告</button>`;
+        box.appendChild(botDiv);
+        streamDom = botDiv.querySelector(".streamText");
+    }
+    // 解析一个 SSE 事件（后端格式：data: {...}\n\n）
+    function handleEvent(rawEvent){
+        const dataLines = rawEvent.split(/\r?\n/).filter(l=>l.trim().startsWith("data:"));
+        if(!dataLines.length) return;
+        const chunkStr = dataLines.map(l=>l.trim().slice(5).trim()).join("");
+        if(!chunkStr || chunkStr === "[DONE]" || chunkStr === "[TOOL_START]") return;
+        try{
+            const json = JSON.parse(chunkStr);
+            // 后端在回答前先推一条引用事件：data: {"type":"sources","sources":[...]}
+            if(json.type === "sources"){
+                sources = json.sources || [];
+                ensureBot();
+                renderSources();
+                return;
+            }
+            const choice = (json.choices && json.choices[0]) || {};
+            const delta = (choice.delta && choice.delta.content) || (choice.message && choice.message.content) || "";
+            if(delta){
+                fullText += delta;
+                ensureBot();
+                streamDom.innerHTML = renderMd(fullText);
+                box.scrollTop = box.scrollHeight;
+            }
+        }catch(e){
+            // 分片JSON不完整，跳过
+        }
+    }
+    try{
+        const resp = await fetch(`${API_URL}/chat_stream`,{
+            method:"POST",
+            headers:{"Content-Type":"application/json"},
+            body:JSON.stringify({
+                message: q,
+                use_rag: useRag,
+                user_info: userInfo,
+                user_id: userId
+            })
+        })
+        // ✅ 关键修复：以前后端 422/500 时这里照样建一个空气泡，页面就是“有问无答”
+        if(!resp.ok){
+            let detail = "";
+            try{ detail = await resp.text(); }catch(_){}
+            throw new Error(`后端返回 HTTP ${resp.status}${detail ? "：" + detail.slice(0,300) : ""}`);
+        }
+        if(!resp.body) throw new Error("浏览器不支持流式读取响应");
+        const reader = resp.body.getReader();
+        // ✅ 开启stream缓冲，自动缓存被截断的半个UTF8汉字
+        const decoder = new TextDecoder("utf-8", {stream:true});
+        let buffer = "";
+        while(true){
+            const {done,value} = await reader.read();
+            if(done) break;
+            buffer += decoder.decode(value,{stream:true});
+            let pos;
+            while((pos = buffer.indexOf("\n\n")) !== -1){
+                handleEvent(buffer.slice(0,pos));
+                buffer = buffer.slice(pos+2);
+            }
+        }
+        buffer += decoder.decode();
+        if(buffer.trim()) handleEvent(buffer);
+        if(fullText.trim()){
+            ensureBot();
+            streamDom.innerHTML = renderMd(fullText);
+            const exportBtn = botDiv.querySelector(".exportBtn");
+            exportBtn.classList.remove("hidden");
+            exportBtn.onclick = ()=>exportMarkdown(fullText);
+            pushMessageToSession("bot", fullText, sources);
+        }else{
+            // 后端 200 但没吐任何正文：给出明确提示，不再留一个空白气泡
+            ensureBot();
+            streamDom.innerHTML = `<span class="text-red-500">⚠️ 本次没有收到模型回答，请重试；若反复出现，请查看后端窗口日志。</span>`;
+        }
+        box.scrollTop = box.scrollHeight;
+    }catch(err){
+        thinkingDiv.remove();
+        if(botDiv && !fullText.trim()) botDiv.remove();
+        appendMsg("bot",`**请求失败**：${err.message}\n\n请确认后端已启动（在 backend 目录执行 \`python main.py\`），并在浏览器打开 http://127.0.0.1:8000/health 自检。`,true)
+        console.error(err)
+    }
+}
+function appendMsg(type,text,saveToSession=true,sources=null){
+    const box = document.getElementById("chatBox")
+    const div = document.createElement("div")
+    let cls = "msg-bot"
+    if(type==="user") cls="msg-user ml-auto";
+    div.className = cls + " p-3 rounded-lg max-w-[85%] shadow-sm";
+    div.innerHTML = `<div class="text-sm">${renderMd(text)}</div>`
+    if(type==="bot" && sources && sources.length){
+        div.innerHTML += `<div class="text-xs text-gray-400 mt-2"><i class="fa fa-book mr-1"></i>引用来源</div>` +
+            sources.map(s=>`<div class="text-xs text-sky-700">[${s.index}] ${s.title}${s.page?` · 第${s.page}页`:""}${s.section?` · ${s.section}`:""}</div>`).join("");
+    }
+    if(type==="bot" && text && text.trim()){
+        const btn = document.createElement("button")
+        btn.className = "exportBtn block mt-2 text-xs text-primary"
+        btn.innerText = "导出报告"
+        btn.onclick = ()=>exportMarkdown(text)
+        div.appendChild(btn)
+    }
+    box.appendChild(div)
+    box.scrollTop = box.scrollHeight
+    if(saveToSession) pushMessageToSession(type,text,sources);
+}
+document.getElementById("addMemoBtn").onclick = ()=>{
+    modalOpen("添加备忘录",`
+        <label class="block text-sm mb-1">标题</label>
+        <input id="mtitle" class="w-full border rounded p-2 mb-2">
+        <label class="block text-sm mb-1">提醒时间</label>
+        <input type="datetime-local" id="mt" class="w-full border rounded p-2">
+    `,()=>{
+        const title = (document.getElementById("mtitle").value || "").trim()
+        const time = document.getElementById("mt").value || ""
+        if(!title){ alert("请先填写备忘录标题"); return }
+        memoList.push({ title, time })
+        saveMemos()
+        renderMemo()
+    })
+}
+/* ---------- 上传文档 / 网页链接后自动提取主要内容 ---------- */
+function openSummary(){
+    const m = document.getElementById("summaryModal");
+    m.classList.remove("hidden");
+    m.style.display = "flex";
+}
+function closeSummary(){
+    const m = document.getElementById("summaryModal");
+    m.classList.add("hidden");
+    m.style.display = "none";
+}
+function copySummary(){
+    const txt = (document.getElementById("summaryContent").innerText || "").trim();
+    if(!txt) return;
+    if(navigator.clipboard && navigator.clipboard.writeText){
+        navigator.clipboard.writeText(txt)
+            .then(()=>alert("要点已复制到剪贴板"))
+            .catch(()=>alert("复制失败，请手动选中复制"));
+    }else{
+        alert("当前浏览器不支持自动复制，请手动选中复制");
+    }
+}
+function summaryLoading(title, meta){
+    document.getElementById("summaryTitle").innerText = title;
+    document.getElementById("summaryMeta").innerText = meta || "";
+    document.getElementById("summaryContent").innerHTML =
+        '<div class="text-gray-400"><i class="fa fa-spinner fa-spin"></i> AI 正在阅读并提取主要内容，大约需要 10~30 秒……</div>';
+    document.getElementById("copySummaryBtn").disabled = true;
+    openSummary();
+}
+function summaryError(msg){
+    document.getElementById("summaryTitle").innerText = "提取失败";
+    document.getElementById("summaryMeta").innerText = "";
+    document.getElementById("summaryContent").innerHTML = '<div class="text-red-500">' + msg + '</div>';
+    document.getElementById("copySummaryBtn").disabled = true;
+    openSummary();
+}
+function summaryResult(res){
+    const name = res.title || res.filename || "材料";
+    const mode = res.summary_mode === "local" ? "（模型暂不可用，已用本地算法提取）" : "";
+    document.getElementById("summaryTitle").innerText = "已提取主要内容";
+    document.getElementById("summaryMeta").innerText =
+        `${name} · 已入库 ${res.chunk_count || 0} 个片段 · 正文 ${res.chars || 0} 字 ${mode}`;
+    const body = res.summary || (res.msg ? res.msg + "\n\n> 当前后端没有返回摘要字段，请重启后端（Ctrl+C 后重新 python main.py）再试。" : "（没有提取到内容）");
+    document.getElementById("summaryContent").innerHTML = renderMd(body);
+    document.getElementById("copySummaryBtn").disabled = false;
+    openSummary();
+    refreshKbStatus(true);   // 入库后立刻刷新侧边栏的知识库状态
+    // 同步到对话里，方便回看和导出
+    appendMsg("bot", `**已自动提取《${name}》的主要内容并写入知识库**（${res.chunk_count || 0} 个片段）\n\n${res.summary || res.msg || ""}`, true);
+}
+function summaryBatch(results, failed){
+    document.getElementById("summaryTitle").innerText = "多源入库完成";
+    const okCount = results.length, failCount = failed.length;
+    document.getElementById("summaryMeta").innerText =
+        `成功 ${okCount} 个 · 失败 ${failCount} 个 · 片段合计 ${results.reduce((a,x)=>a+(x.chunk_count||0),0)}`;
+    const md = results.map(r=>{
+        const mode = r.summary_mode === "local" ? "（本地抽取）" : "";
+        return `### ${r.title || "文档"}\n- 来源类型：${r.source_type || "file"}｜片段：${r.chunk_count || 0}｜正文：${r.chars || 0} 字\n` +
+               (r.summary ? `\n${r.summary}\n` : "") +
+               (r.warnings && r.warnings.length ? `\n> 提示：${r.warnings.join("；")}${mode}\n` : "");
+    }).join("\n");
+    const failMd = failed.length ? `\n### 失败清单\n` + failed.map(f=>`- ${f.filename}：${f.msg}`).join("\n") : "";
+    document.getElementById("summaryContent").innerHTML = renderMd(md + failMd || "（没有返回内容）");
+    document.getElementById("copySummaryBtn").disabled = false;
+    openSummary();
+    refreshKbStatus(true);   // 入库后立刻刷新侧边栏的知识库状态
+    appendMsg("bot", `**多源入库完成**：成功 ${okCount} 个、失败 ${failCount} 个\n\n${md}${failMd}`, true);
+}
+document.getElementById("urlBtn").onclick = ()=>{
+    modalOpen("链接入库",`
+        <label class="block text-sm mb-1">网页URL</label>
+        <input id="urlInput" class="w-full border rounded p-2" placeholder="https://...">
+        <div class="text-xs text-gray-400 mt-2">入库后自动抓取正文并提取主要内容</div>
+    `,async ()=>{
+        const url = (document.getElementById("urlInput").value || "").trim();
+        if(!/^https?:\/\//i.test(url)){ summaryError("请填写以 http:// 或 https:// 开头的完整网址"); return; }
+        summaryLoading("正在抓取网页", url + " 抓取 + 提取中……");
+        try{
+            const r = await fetch(`${API_URL}/fetch_url`,{
+                method:"POST",
+                headers:{"Content-Type":"application/json"},
+                body:JSON.stringify({url, user_id: userId})
+            });
+            const res = await r.json().catch(()=>({msg:"HTTP " + r.status}));
+            if(!r.ok){ summaryError(res.msg || ("抓取失败 HTTP " + r.status)); return; }
+            summaryResult(res);
+        }catch(e){
+            summaryError("抓取失败：" + e.message + "，请确认后端已启动（http://127.0.0.1:8000/health）");
+        }
+    })
+}
+document.getElementById("uploadDocBtn").onclick = ()=>{
+    modalOpen("多源数据入库",`
+        <label class="block text-sm mb-2">本地文件（可多选）</label>
+        <input type="file" id="fileInput" multiple accept=".pdf,.docx,.txt,.md,.markdown,.csv,.xlsx,.json,.html,.htm,.png,.jpg,.jpeg,.webp,.bmp" class="w-full">
+        <div class="text-xs text-gray-400 mt-1">支持 PDF / Word / TXT / Markdown / CSV / Excel / JSON / HTML / 图片OCR，单文件 ≤30MB</div>
+        <label class="block text-sm mt-3 mb-1">或直接粘贴文本</label>
+        <textarea id="pasteText" rows="5" class="w-full border rounded p-2" placeholder="例如：学院培养方案条款、教务通知全文……"></textarea>
+        <input id="pasteTitle" class="w-full border rounded p-2 mt-2" placeholder="标题（可选，默认“粘贴文本”）">
+    `,async ()=>{
+        const fileDom = document.getElementById("fileInput");
+        const files = Array.from(fileDom.files || []);
+        const pasteText = (document.getElementById("pasteText").value || "").trim();
+        const pasteTitle = (document.getElementById("pasteTitle").value || "").trim();
+
+        if(!files.length && !pasteText){ summaryError("请选择文件或粘贴文本内容"); return; }
+        for(const f of files){
+            if(f.size > 30*1024*1024){ summaryError(`《${f.name}》超过 30MB，请压缩后再上传`); return; }
+        }
+        try{
+            if(files.length === 1){
+                summaryLoading("正在解析文档", files[0].name + " 解析 + 提取中……");
+                const formData = new FormData();
+                formData.append("file", files[0]);
+                formData.append("user_id", userId);
+                const resp = await fetch(`${API_URL}/upload_doc`,{ method:"POST", body: formData });
+                const res = await resp.json().catch(()=>({msg:"HTTP " + resp.status}));
+                if(!resp.ok){ summaryError(res.msg || ("上传失败 HTTP " + resp.status)); return; }
+                summaryResult(res);
+                return;
+            }
+            if(files.length > 1){
+                summaryLoading("正在批量解析", `${files.length} 个文件排队解析 + 提取中……`);
+                const formData = new FormData();
+                files.forEach(f=>formData.append("files", f));
+                formData.append("user_id", userId);
+                const resp = await fetch(`${API_URL}/upload_docs`,{ method:"POST", body: formData });
+                const res = await resp.json().catch(()=>({msg:"HTTP " + resp.status}));
+                if(!resp.ok){ summaryError(res.msg || ("批量上传失败 HTTP " + resp.status)); return; }
+                summaryBatch(res.results || [], res.failed || []);
+                return;
+            }
+            summaryLoading("正在解析文本", (pasteTitle || "粘贴文本") + " 入库中……");
+            const resp = await fetch(`${API_URL}/ingest_text`,{
+                method:"POST",
+                headers:{"Content-Type":"application/json"},
+                body:JSON.stringify({text: pasteText, title: pasteTitle || "粘贴文本", user_id: userId})
+            });
+            const res = await resp.json().catch(()=>({msg:"HTTP " + resp.status}));
+            if(!resp.ok){ summaryError(res.msg || ("入库失败 HTTP " + resp.status)); return; }
+            summaryBatch([{title: pasteTitle || "粘贴文本", source_type:"paste", chunk_count: res.chunks, chars: res.characters, summary:""}], []);
+        }catch(e){
+            summaryError("入库失败：" + e.message + "，请确认后端已启动（http://127.0.0.1:8000/health）");
+        }
+    })
+}
+/* ---------- 知识库面板：查看已入库文档与片段的元数据 ---------- */
+async function loadKb(){
+    const listDom = document.getElementById("kbList");
+    const statDom = document.getElementById("kbStats");
+    if(!listDom) return;
+    listDom.innerHTML = '<div class="text-gray-400 text-sm"><i class="fa fa-spinner fa-spin"></i> 读取中……</div>';
+    try{
+        const s = await (await fetch(`${API_URL}/kb/stats?user_id=${encodeURIComponent(userId)}`)).json();
+        statDom.innerText = `向量库：${s.backend || "-"} · 集合：${s.collection || "-"} · 片段：${s.points || 0} · 文档：${s.documents || 0} · 向量模式：${s.embedding_mode || "-"}`;
+        const d = await (await fetch(`${API_URL}/kb/documents?user_id=${encodeURIComponent(userId)}`)).json();
+        if(!d.documents || !d.documents.length){
+            listDom.innerHTML = '<div class="text-gray-400 text-sm">还没有入库的文档，先点【多源入库】。</div>';
+            return;
+        }
+        const typeName = {file:"本地文件", web:"网页链接", paste:"粘贴文本", image:"图片OCR", summary:"摘要"};
+        listDom.innerHTML = `<table class="w-full text-xs border-collapse"><thead><tr class="text-gray-500"><th class="text-left p-1">标题</th><th class="p-1">来源</th><th class="p-1">片段</th><th class="p-1">字数</th><th class="p-1">操作</th></tr></thead><tbody>` +
+            d.documents.map(x=>`<tr class="border-t"><td class="p-1">${x.title||x.source||"-"}</td><td class="p-1 text-center">${typeName[x.source_type]||x.source_type||"-"}</td><td class="p-1 text-center">${x.chunks||0}</td><td class="p-1 text-center">${x.chars||0}</td><td class="p-1 text-center"><button class="text-red-400" onclick="delKb('${x.doc_id}')">删除</button></td></tr>`).join("") +
+            `</tbody></table>`;
+    }catch(e){
+        listDom.innerHTML = '<div class="text-red-500 text-sm">读取失败：' + e.message + '</div>';
+    }
+}
+async function delKb(docId){
+    if(!confirm("确定从向量库删除该文档的全部片段？")) return;
+    try{
+        const r = await fetch(`${API_URL}/kb/delete`,{
+            method:"POST", headers:{"Content-Type":"application/json"},
+            body:JSON.stringify({user_id: userId, doc_id: docId})
+        });
+        const ret = await r.json().catch(()=>({msg:"HTTP " + r.status}));
+        if(!r.ok){ alert(ret.msg || "删除失败"); return; }
+        await loadKb();
+    }catch(e){
+        alert("删除失败：" + e.message);
+    }
+}
+document.getElementById("kbBtn").onclick = ()=>{
+    modalOpen("我的知识库",`
+        <div id="kbStats" class="text-xs text-gray-500 mb-2"></div>
+        <div id="kbList" class="text-sm max-h-[50vh] overflow-y-auto"></div>
+    `,()=>{})
+    loadKb();
+}
+document.getElementById("authBtn").onclick = ()=>{
+    modalOpen("教务授权 · 录入模拟已修课程信息",`
+        <div class="text-xs text-gray-400 mb-3">演示模拟数据，信息保存在本地，用于选课规划</div>
+        <label class="block text-sm mb-1">当前已修总学分</label>
+        <input id="s_total" class="w-full border rounded p-2 mb-2" value="23">
+        <label class="block text-sm mb-1">已修必修学分</label>
+        <input id="s_req" class="w-full border rounded p-2 mb-2" value="23">
+        <label class="block text-sm mb-1">已修选修学分</label>
+        <input id="s_ele" class="w-full border rounded p-2 mb-2" value="0">
+        <label class="block text-sm mb-1">已完成学期（例：2个学期，大一上完）</label>
+        <input id="s_term" class="w-full border rounded p-2 mb-2" value="2">
+        <label class="block text-sm mb-1">已修课程列表（一行一门，格式：课程名|学分|必修/选修）</label>
+        <textarea id="s_courses" rows="6" class="w-full border rounded p-2 mb-2">高等数学A|4|必修
+大学英语1|3|必修
+程序设计基础|4|必修
+计算机导论|2|必修
+思政基础|3|必修
+体育1|1|必修
+离散数学|3|必修
+线性代数|3|必修</textarea>
+    `,()=>{
+        const courseText = document.getElementById("s_courses").value
+        const courseArr = courseText.split("\n").filter(line=>line.trim()).map(line=>{
+            const [name,credit,type] = line.split("|")
+            return {name:name?.trim(), credit:Number(credit), type:type?.trim()}
+        })
+        stuCourseData = {
+            totalCredit: Number(document.getElementById("s_total").value),
+            requiredCredit: Number(document.getElementById("s_req").value),
+            electiveCredit: Number(document.getElementById("s_ele").value),
+            finishedTerm: Number(document.getElementById("s_term").value),
+            courseList: courseArr
+        }
+        localStorage.setItem("stu_course_data", JSON.stringify(stuCourseData))
+        refreshCreditPanel()
+        alert("模拟学业信息录入成功！现在点击【下学期选课规划】，AI直接读取你的课程数据生成方案，不再反复询问")
+    })
+}
+const modal = document.getElementById("modalWrap")
+function modalOpen(title,body,okCb){
+    document.getElementById("modalTitle").innerText = title
+    document.getElementById("modalBody").innerHTML = body
+    modal.classList.remove("hidden")
+    modal.style.display="flex"
+    document.getElementById("modalOk").onclick = async ()=>{ const cb = okCb; modalClose(); try{ await cb() }catch(e){ alert("操作失败：" + e.message) } }
+}
+function modalClose(){ modal.classList.add("hidden"); modal.style.display="none" }
+document.getElementById("modalCancel").onclick = modalClose
+document.getElementById("sendBtn").onclick = ()=>{
+    const txt = document.getElementById("userInput").value.trim()
+    if(txt) sendMsg(txt, true)
+}
+document.getElementById("userInput").onkeydown = (e)=>{
+    if(e.key==='Enter' && !e.shiftKey){ e.preventDefault(); document.getElementById("sendBtn").click() }
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>登录 - 校园教务智能规划RAG系统</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- 图标：本地 vendor 优先，cdn.jsdelivr.net 在国内常被墙 -->
+    <link href="vendor/font-awesome/css/font-awesome.min.css" rel="stylesheet">
+    <link href="https://cdn.staticfile.org/font-awesome/4.7.0/css/font-awesome.min.css" rel="stylesheet">
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        primary: '#1677ff',
+                        light: '#e8f3ff'
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        body {
+            background: linear-gradient(135deg, #e8f3ff 0%, #bae0ff 50%, #e8f3ff 100%);
+            min-height: 100vh;
+        }
+        .login-card {
+            box-shadow: 0 20px 60px rgba(22, 119, 255, 0.15);
+        }
+        .form-input {
+            transition: all 0.2s;
+        }
+        .form-input:focus {
+            box-shadow: 0 0 0 3px rgba(22, 119, 255, 0.15);
+        }
+    </style>
+</head>
+<body class="flex items-center justify-center p-4">
+    <div class="w-full max-w-md">
+        <!-- 顶部 Logo -->
+        <div class="text-center mb-6">
+            <div class="inline-flex items-center justify-center w-16 h-16 bg-primary rounded-2xl shadow-lg mb-3">
+                <i class="fa fa-graduation-cap text-white text-3xl"></i>
+            </div>
+            <h1 class="text-2xl font-bold text-gray-800">校园教务智能规划RAG系统</h1>
+            <p class="text-sm text-gray-500 mt-1">学分自查 · 选课规划 · 毕业诊断</p>
+        </div>
+
+        <!-- 登录卡片 -->
+        <div class="login-card bg-white rounded-2xl p-8">
+            <h2 class="text-lg font-bold text-gray-700 mb-1 flex items-center gap-2">
+                <i class="fa fa-user-circle text-primary"></i> 学籍信息登录
+            </h2>
+            <p class="text-xs text-gray-400 mb-6">填写学籍资料，系统将自动录入并生成个性化规划</p>
+
+            <form id="loginForm" class="space-y-4">
+                <!-- 学校 -->
+                <div>
+                    <label class="block text-sm font-medium text-gray-600 mb-1">
+                        <i class="fa fa-building-o text-primary mr-1"></i>学校
+                    </label>
+                    <input type="text" id="school" required placeholder="例如：山东大学"
+                           class="form-input w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:outline-primary focus:border-primary">
+                </div>
+
+                <!-- 学院 + 年级 -->
+                <div class="grid grid-cols-2 gap-3">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-600 mb-1">
+                            <i class="fa fa-university text-primary mr-1"></i>学院
+                        </label>
+                        <input type="text" id="college" required placeholder="例如：计算机学院"
+                               class="form-input w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:outline-primary focus:border-primary">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-600 mb-1">
+                            <i class="fa fa-calendar text-primary mr-1"></i>年级
+                        </label>
+                        <select id="grade" required
+                                class="form-input w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:outline-primary focus:border-primary bg-white">
+                            <option value="">请选择</option>
+                            <option value="2025级">2025级（大一）</option>
+                            <option value="2024级">2024级（大二）</option>
+                            <option value="2023级">2023级（大三）</option>
+                            <option value="2022级">2022级（大四）</option>
+                        </select>
+                    </div>
+                </div>
+
+                <!-- 专业 -->
+                <div>
+                    <label class="block text-sm font-medium text-gray-600 mb-1">
+                        <i class="fa fa-book text-primary mr-1"></i>专业
+                    </label>
+                    <input type="text" id="major" required placeholder="例如：计算机科学与技术"
+                           class="form-input w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:outline-primary focus:border-primary">
+                </div>
+
+                <!-- 姓名 + 学号 -->
+                <div class="grid grid-cols-2 gap-3">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-600 mb-1">
+                            <i class="fa fa-user text-primary mr-1"></i>姓名
+                        </label>
+                        <input type="text" id="name" placeholder="选填"
+                               class="form-input w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:outline-primary focus:border-primary">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-600 mb-1">
+                            <i class="fa fa-id-card-o text-primary mr-1"></i>学号
+                        </label>
+                        <input type="text" id="studentId" placeholder="选填"
+                               class="form-input w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:outline-primary focus:border-primary">
+                    </div>
+                </div>
+
+                <!-- 已修课程信息（可展开） -->
+                <div class="pt-2">
+                    <button type="button" id="toggleCourse"
+                            class="w-full flex items-center justify-between text-sm text-gray-500 bg-light rounded-lg px-3 py-2 hover:bg-sky-100 transition">
+                        <span><i class="fa fa-angle-double-down mr-1"></i>已修课程信息（选填，可登录后补录）</span>
+                        <i class="fa fa-chevron-down text-xs transition-transform" id="courseArrow"></i>
+                    </button>
+                    <div id="courseSection" class="hidden mt-3 space-y-3">
+                        <div class="grid grid-cols-3 gap-2">
+                            <div>
+                                <label class="block text-xs text-gray-500 mb-1">已修总学分</label>
+                                <input type="number" id="totalCredit" value="0" min="0"
+                                       class="form-input w-full border border-gray-200 rounded px-2 py-1.5 text-sm focus:outline-primary">
+                            </div>
+                            <div>
+                                <label class="block text-xs text-gray-500 mb-1">必修学分</label>
+                                <input type="number" id="requiredCredit" value="0" min="0"
+                                       class="form-input w-full border border-gray-200 rounded px-2 py-1.5 text-sm focus:outline-primary">
+                            </div>
+                            <div>
+                                <label class="block text-xs text-gray-500 mb-1">选修学分</label>
+                                <input type="number" id="electiveCredit" value="0" min="0"
+                                       class="form-input w-full border border-gray-200 rounded px-2 py-1.5 text-sm focus:outline-primary">
+                            </div>
+                        </div>
+                        <div>
+                            <label class="block text-xs text-gray-500 mb-1">已完成学期数</label>
+                            <input type="number" id="finishedTerm" value="0" min="0" max="8"
+                                   class="form-input w-full border border-gray-200 rounded px-2 py-1.5 text-sm focus:outline-primary">
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 提交按钮 -->
+                <button type="submit" id="loginBtn"
+                        class="w-full bg-primary text-white py-3 rounded-lg font-medium hover:bg-blue-600 transition flex items-center justify-center gap-2 mt-2">
+                    <i class="fa fa-sign-in"></i> 进入教务系统
+                </button>
+            </form>
+        </div>
+
+        <!-- 底部说明 -->
+        <p class="text-center text-xs text-gray-400 mt-6">
+            <i class="fa fa-shield mr-1"></i>学籍信息仅保存在本地浏览器，不会上传服务器
+        </p>
+    </div>
+
+    <script>
+        // 如果已经登录过，自动填充表单
+        const savedInfo = JSON.parse(localStorage.getItem('rag_user_info') || '{}');
+        if (savedInfo.school) {
+            document.getElementById('school').value = savedInfo.school || '';
+            document.getElementById('college').value = savedInfo.college || '';
+            document.getElementById('major').value = savedInfo.major || '';
+            document.getElementById('grade').value = savedInfo.grade || '';
+            document.getElementById('name').value = savedInfo.name || '';
+            document.getElementById('studentId').value = savedInfo.studentId || '';
+        }
+
+        const savedCourse = JSON.parse(localStorage.getItem('stu_course_data') || 'null');
+        if (savedCourse) {
+            document.getElementById('totalCredit').value = savedCourse.totalCredit || 0;
+            document.getElementById('requiredCredit').value = savedCourse.requiredCredit || 0;
+            document.getElementById('electiveCredit').value = savedCourse.electiveCredit || 0;
+            document.getElementById('finishedTerm').value = savedCourse.finishedTerm || 0;
+        }
+
+        // 展开/收起课程信息
+        document.getElementById('toggleCourse').onclick = function() {
+            const sec = document.getElementById('courseSection');
+            const arrow = document.getElementById('courseArrow');
+            sec.classList.toggle('hidden');
+            arrow.style.transform = sec.classList.contains('hidden') ? '' : 'rotate(180deg)';
+        };
+
+        // 提交登录
+        document.getElementById('loginForm').onsubmit = function(e) {
+            e.preventDefault();
+            const btn = document.getElementById('loginBtn');
+            btn.disabled = true;
+            btn.innerHTML = '<i class="fa fa-spinner fa-spin"></i> 正在录入学籍信息...';
+
+            // 收集学籍信息，写入 localStorage（与主页面 index.html 读取格式完全一致）
+            const userInfo = {
+                school: document.getElementById('school').value.trim(),
+                college: document.getElementById('college').value.trim(),
+                major: document.getElementById('major').value.trim(),
+                grade: document.getElementById('grade').value,
+                name: document.getElementById('name').value.trim(),
+                studentId: document.getElementById('studentId').value.trim(),
+                loginAt: new Date().toISOString()
+            };
+            localStorage.setItem('rag_user_info', JSON.stringify(userInfo));
+
+            // 收集已修课程信息（如果填了），写入 stu_course_data
+            const totalCredit = Number(document.getElementById('totalCredit').value) || 0;
+            const requiredCredit = Number(document.getElementById('requiredCredit').value) || 0;
+            const electiveCredit = Number(document.getElementById('electiveCredit').value) || 0;
+            const finishedTerm = Number(document.getElementById('finishedTerm').value) || 0;
+
+            if (totalCredit > 0 || requiredCredit > 0) {
+                const courseData = {
+                    totalCredit,
+                    requiredCredit,
+                    electiveCredit,
+                    finishedTerm,
+                    courseList: []
+                };
+                localStorage.setItem('stu_course_data', JSON.stringify(courseData));
+            }
+
+            // 模拟录入动画后跳转主页
+            setTimeout(() => {
+                location.href = 'index.html';
+            }, 600);
+        };
+    </script>
+</body>
+</html>
